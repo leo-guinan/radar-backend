@@ -76,7 +76,9 @@ class ConversationUpdate(BaseModel):
     referenced_content: Optional[str] = Field(description="Any new content that was referenced")
 
 # Initialize ell
-ell.init(store='./ell_store', autocommit=True)
+if os.getenv("ENV") != "prod":
+    ell.init(store='./ell_store', autocommit=True)
+
 JINA_READER_URL = "https://r.jina.ai/"
 # Media processing functions
 def is_youtube_url(url: str) -> bool:
