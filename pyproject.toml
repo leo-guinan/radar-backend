@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "demo-server"
+version = "0.1.0"
+description = ""
+authors = ["Leo Guinan <leo.guinan@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.111.1"
+uvicorn = "^0.30.3"
+asyncpg = "^0.29.0"
+python-dotenv = "^1.0.1"
+pydantic = "^2.6.3"
+beautifulsoup4 = "^4.12.3"
+requests = "^2.31.0"
+ell-ai = "^0.0.14"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
