@@ -328,6 +328,10 @@ async def add_message(conversation_id: UUID, message: str, url: Optional[str] = 
                 {"id": str(ai_msg_id), "role": "assistant", "content": ai_message}
             ]
         }
+    
+@app.get("/api/health")
+async def health():
+    return {"status": "ok"}
 
 if __name__ == "__main__":
     import uvicorn
