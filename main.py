@@ -1,4 +1,6 @@
+from urllib.request import Request
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
@@ -18,18 +20,21 @@ import logging
 load_dotenv()
 
 app = FastAPI()
+@app.middleware("http")
+async def debug_middleware(request: Request, call_next):
+    print(f"Request headers: {request.headers}")
+    response = await call_next(request)
+    print(f"Response headers: {response.headers}")
+    return response
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-       '*'
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,  # Change this to False if using wildcard
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -330,6 +335,19 @@ async def add_message(conversation_id: UUID, message: str, url: Optional[str] = 
                 {"id": str(ai_msg_id), "role": "assistant", "content": ai_message}
             ]
         }
+    
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Global error: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
     
 @app.get("/api/health")
 async def health():
