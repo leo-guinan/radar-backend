@@ -1,2 +1,4 @@
 .env
 ell_store/
+__pycache__/
+

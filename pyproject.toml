@@ -1,14 +1,17 @@
 [tool.poetry]
-name = "demo-server"
+name = "radar-backend"
 version = "0.1.0"
 description = ""
 authors = ["Leo Guinan <leo.guinan@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.12"
+python = "^3.9"
 fastapi = "^0.111.1"
 uvicorn = "^0.30.3"
+sqlalchemy = "^2.0.14"
+alembic = "^1.7.1"
+psycopg2-binary = "^2.9.1"
 asyncpg = "^0.29.0"
 python-dotenv = "^1.0.1"
 pydantic = "^2.6.3"
