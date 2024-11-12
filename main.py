@@ -44,7 +44,12 @@ logger = logging.getLogger(__name__)
 
 # Database connection pool
 async def get_db_pool():
-    return await asyncpg.create_pool(os.getenv("DATABASE_URL"))
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        logger.error("DATABASE_URL not set")
+        raise HTTPException(status_code=500, detail="Database configuration error")
+    logger.info(f"Connecting to database at: {db_url.split('@')[-1]}")  # Log host/port, not credentials
+    return await asyncpg.create_pool(db_url)
 
 # Models
 class AnalyzeRequest(BaseModel):
