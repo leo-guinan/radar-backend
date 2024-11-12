@@ -19,10 +19,13 @@ load_dotenv()
 
 app = FastAPI()
 
-# CORS middleware
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://dcmxdbucgrov8.cloudfront.net",  # Your frontend domain
+        "http://localhost:5173",  # Local development
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
