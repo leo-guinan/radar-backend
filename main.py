@@ -16,10 +16,26 @@ import ell
 from urllib.parse import urlparse
 import json
 import logging
+from contextlib import asynccontextmanager
 
 load_dotenv()
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Setup
+    global db_pool
+    db_pool = await asyncpg.create_pool(
+        os.getenv("DATABASE_URL"),
+        min_size=2,
+        max_size=10
+    )
+    yield
+    # Cleanup
+    if db_pool:
+        await db_pool.close()
+
+app = FastAPI(lifespan=lifespan)
+
 @app.middleware("http")
 async def debug_middleware(request: Request, call_next):
     print(f"Request headers: {request.headers}")
@@ -86,6 +102,10 @@ class ConversationUpdate(BaseModel):
     response: str = Field(description="The response to the user")
     follow_up: str = Field(description="A follow-up question to continue the conversation")
     referenced_content: Optional[str] = Field(description="Any new content that was referenced")
+
+class MessageRequest(BaseModel):
+    message: str
+    url: Optional[str] = None
 
 # Initialize ell
 if os.getenv("ENV") != "prod":
@@ -232,8 +252,7 @@ async def analyze_media(request: AnalyzeRequest):
 
 @app.get("/api/conversations/{conversation_id}")
 async def get_conversation(conversation_id: UUID):
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
+    async with db_pool.acquire() as conn:
         messages = await conn.fetch('''
             SELECT id, conversation_id, role, content, timestamp
             FROM messages
@@ -278,69 +297,88 @@ async def dispatch_webhook(event: str, payload: dict):
 
 # Add endpoint for continuing conversation
 @app.post("/api/conversations/{conversation_id}/messages")
-async def add_message(conversation_id: UUID, message: str, url: Optional[str] = None):
+async def add_message(conversation_id: str, request: MessageRequest):
+    conversation_id = UUID(conversation_id)
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        # Get existing conversation and messages
-        conversation = await conn.fetchrow('''
-            SELECT * FROM conversations WHERE id = $1
-        ''', conversation_id)
-        
-        if not conversation:
-            raise HTTPException(status_code=404, detail="Conversation not found")
+        try:
+            # Process new content if URL provided
+            new_content = None
+            if request.url:
+                processed = await process_media(request.url)
+                new_content = processed["content"]
             
-        messages = await conn.fetch('''
-            SELECT * FROM messages 
-            WHERE conversation_id = $1 
-            ORDER BY timestamp ASC
-        ''', conversation_id)
-        
-        # Process new content if URL provided
-        new_content = None
-        if url:
-            processed = await process_media(url)
-            new_content = processed["content"]
-        
-        # Continue conversation using ell
-        current_world_model = WorldModel(**json.loads(conversation["world_model"]))
-        response = continue_conversation(
-            current_world_model,
-            [{"role": m["role"], "content": m["content"]} for m in messages],
-            new_content
-        )
-        
-        # Extract structured response
-        update_data = response.parsed
-        
-        # Update the world model in the conversation
-        await conn.execute('''
-            UPDATE conversations 
-            SET world_model = $1 
-            WHERE id = $2
-        ''', json.dumps(update_data.updated_world_model.dict()), conversation_id)
-        
-        # Save new messages
-        msg_id = uuid4()
-        await conn.execute('''
-            INSERT INTO messages (id, conversation_id, role, content)
-            VALUES ($1, $2, $3, $4)
-        ''', msg_id, conversation_id, "user", message)
-        
-        # Combine response and follow-up
-        ai_message = f"{update_data.response}\n\n{update_data.follow_up}"
-        ai_msg_id = uuid4()
-        await conn.execute('''
-            INSERT INTO messages (id, conversation_id, role, content)
-            VALUES ($1, $2, $3, $4)
-        ''', ai_msg_id, conversation_id, "assistant", ai_message)
-        
-        return {
-            "messages": [
-                {"id": str(msg_id), "role": "user", "content": message},
-                {"id": str(ai_msg_id), "role": "assistant", "content": ai_message}
-            ]
-        }
-    
+            # Save user message
+            msg_id = uuid4()
+            await conn.execute('''
+                INSERT INTO messages (id, conversation_id, role, content)
+                VALUES ($1, $2, $3, $4)
+            ''', msg_id, conversation_id, "user", request.message)
+            
+            # Get conversation context
+            conversation = await conn.fetchrow('''
+                SELECT * FROM conversations WHERE id = $1
+            ''', conversation_id)
+            
+            if not conversation:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+            
+            # Get message history
+            messages = await conn.fetch('''
+                SELECT * FROM messages 
+                WHERE conversation_id = $1 
+                ORDER BY timestamp ASC
+            ''', conversation_id)
+            
+            # Continue conversation using ell
+            current_world_model = WorldModel(**json.loads(conversation["world_model"]))
+            response = continue_conversation(
+                current_world_model,
+                [{"role": m["role"], "content": m["content"]} for m in messages],
+                new_content
+            )
+            
+            # Extract structured response
+            update_data = response.parsed
+            
+            # Update world model
+            await conn.execute('''
+                UPDATE conversations 
+                SET world_model = $1 
+                WHERE id = $2
+            ''', json.dumps(update_data.updated_world_model.dict()), conversation_id)
+            
+            # Save AI response
+            ai_message = f"{update_data.response}\n\n{update_data.follow_up}"
+            ai_msg_id = uuid4()
+            await conn.execute('''
+                INSERT INTO messages (id, conversation_id, role, content)
+                VALUES ($1, $2, $3, $4)
+            ''', ai_msg_id, conversation_id, "assistant", ai_message)
+            
+            return {
+                "messages": [
+                    {
+                        "id": str(msg_id),
+                        "conversation_id": str(conversation_id),
+                        "role": "user",
+                        "content": request.message,
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    {
+                        "id": str(ai_msg_id),
+                        "conversation_id": str(conversation_id),
+                        "role": "assistant", 
+                        "content": ai_message,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                ]
+            }
+            
+        except Exception as e:
+            logger.error(f"Error adding message: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e))
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global error: {exc}")
